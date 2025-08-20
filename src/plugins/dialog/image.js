@@ -29,6 +29,7 @@ export default {
             sizeUnit: options._imageSizeUnit,
             _linkElement: '',
             _altText: '',
+            _optimize: true,
             _align: 'none',
             _floatClassRegExp: '__se__float\\-[a-z]+',
             _v_src: {_linkValue: ''},
@@ -71,6 +72,7 @@ export default {
         contextImage.imgUrlFile = image_dialog.querySelector('._se_image_url');
         contextImage.focusElement = contextImage.imgInputFile || contextImage.imgUrlFile;
         contextImage.altText = image_dialog.querySelector('._se_image_alt');
+        contextImage.optimize = image_dialog.querySelector('._se_image_check_optimize');
         contextImage.captionCheckEl = image_dialog.querySelector('._se_image_check_caption');
         contextImage.previewSrc = image_dialog.querySelector('._se_tab_content_image .se-link-preview');
 
@@ -197,6 +199,7 @@ export default {
             html += '' +
                         '<div class="se-dialog-form se-dialog-form-footer">' +
                             '<label><input type="checkbox" class="se-dialog-btn-check _se_image_check_caption" />&nbsp;' + lang.dialogBox.caption + '</label>' +
+                            '<label><input type="checkbox" checked class="se-dialog-btn-check _se_image_check_optimize" />&nbsp;이미지 최적화</label>' +
                         '</div>' +
                     '</div>' +
                 '</div>' +
@@ -366,6 +369,7 @@ export default {
         e.stopPropagation();
 
         contextImage._altText = contextImage.altText.value;
+        contextImage._optimize = contextImage.optimize.checked;
         contextImage._align = contextImage.modal.querySelector('input[name="suneditor_image_radio"]:checked').value;
         contextImage._captionChecked = contextImage.captionCheckEl.checked;
         if (contextImage._resizing) contextImage._proportionChecked = contextImage.proportion.checked;
@@ -397,30 +401,40 @@ export default {
 
         let fileSize = 0;
         let files = [];
+        const limitSize = this.options.imageUploadSizeLimit;
         for (let i = 0, len = fileList.length; i < len; i++) {
             if (/image/i.test(fileList[i].type)) {
                 files.push(fileList[i]);
+
+                if (fileList[i].size > limitSize) {
+                    this.closeLoading();
+                    const err = fileList[i].name + ' 파일의 용량이 서버에 설정(' + (limitSize/1024/1024) + 'MB)된 값보다 크므로 업로드 할 수 없습니다.';
+                    if (typeof this.functions.onImageUploadError !== 'function' || this.functions.onImageUploadError(err, { 'limitSize': limitSize, 'currentSize': infoSize, 'uploadSize': fileSize }, this)) {
+                        this.functions.noticeOpen(err);
+                    }
+                    return;
+                }
                 fileSize += fileList[i].size;
             }
         }
 
-        const limitSize = this.options.imageUploadSizeLimit;
-        if (limitSize > 0) {
-            let infoSize = 0;
-            const imagesInfo = this.context.image._infoList;
-            for (let i = 0, len = imagesInfo.length; i < len; i++) {
-                infoSize += imagesInfo[i].size * 1;
-            }
+        // const limitSize = this.options.imageUploadSizeLimit;
+        // if (limitSize > 0) {
+        //     let infoSize = 0;
+        //     const imagesInfo = this.context.image._infoList;
+        //     for (let i = 0, len = imagesInfo.length; i < len; i++) {
+        //         infoSize += imagesInfo[i].size * 1;
+        //     }
 
-            if ((fileSize + infoSize) > limitSize) {
-                this.closeLoading();
-                const err = '[SUNEDITOR.imageUpload.fail] Size of uploadable total images: ' + (limitSize/1000) + 'KB';
-                if (typeof this.functions.onImageUploadError !== 'function' || this.functions.onImageUploadError(err, { 'limitSize': limitSize, 'currentSize': infoSize, 'uploadSize': fileSize }, this)) {
-                    this.functions.noticeOpen(err);
-                }
-                return;
-            }
-        }
+        //     if ((fileSize + infoSize) > limitSize) {
+        //         this.closeLoading();
+        //         const err = '[SUNEDITOR.imageUpload.fail] Size of uploadable total images: ' + (limitSize/1000) + 'KB';
+        //         if (typeof this.functions.onImageUploadError !== 'function' || this.functions.onImageUploadError(err, { 'limitSize': limitSize, 'currentSize': infoSize, 'uploadSize': fileSize }, this)) {
+        //             this.functions.noticeOpen(err);
+        //         }
+        //         return;
+        //     }
+        // }
 
         const contextImage = this.context.image;
         contextImage._uploadFileLength = files.length;
@@ -480,9 +494,13 @@ export default {
         // server upload
         if (typeof imageUploadUrl === 'string' && imageUploadUrl.length > 0) {
             const formData = new FormData();
+            const contextImage = this.context.image;
             for (let i = 0; i < filesLen; i++) {
                 formData.append('file-' + i, files[i]);
             }
+
+            formData.append('optimize', contextImage._optimize);
+
             this.plugins.fileManager.upload.call(this, imageUploadUrl, this.options.imageUploadHeader, formData, this.plugins.image.callBack_imgUpload.bind(this, info), this.functions.onImageUploadError);
         } else { // base64
             this.plugins.image.setup_reader.call(this, files, info.anchor, info.inputWidth, info.inputHeight, info.align, info.alt, filesLen, info.isUpdate);
@@ -684,7 +702,7 @@ export default {
         imagePlugin.setAlign.call(this, align, oImg, cover, container);
 
         oImg.onload = imagePlugin._image_create_onload.bind(this, oImg, contextImage.svgDefaultSize, container);
-        if (this.insertComponent(container, true, true, true)) this.plugins.fileManager.setInfo.call(this, 'image', oImg, this.functions.onImageUpload, file, true);
+        if (this.insertComponent(container, true, true, !this.options.mediaAutoSelect)) this.plugins.fileManager.setInfo.call(this, 'image', oImg, this.functions.onImageUpload, file, true);
         this.context.resizing._resize_plugin = '';
     },
 
@@ -697,6 +715,7 @@ export default {
             const line = this.appendFormatTag(container, null);
             if (line) this.setRange(line, 0, line, 0);
         }
+        this.history.push(false);
     },
 
     update_image: function (init, openController, notHistoryPush) {
@@ -989,8 +1008,10 @@ export default {
         contextImage._element.style.maxWidth = '';
         contextImage._element.style.width = '';
         contextImage._element.style.height = '';
-        contextImage._cover.style.width = '';
-        contextImage._cover.style.height = '';
+        if(contextImage._cover) {
+            contextImage._cover.style.width = '';
+            contextImage._cover.style.height = '';
+        }
 
         this.plugins.image.setAlign.call(this, null, null, null, null);
         contextImage._element.setAttribute('data-percentage', 'auto,auto');
@@ -1033,10 +1054,16 @@ export default {
         h = !!h && !/%$/.test(h) && !this.util.getNumber(h, 0) ? this.util.isNumber(h) ? h + '%' : h : this.util.isNumber(h) ? h + contextImage.sizeUnit : (h || '');
         const heightPercentage = /%$/.test(h);
 
-        contextImage._container.style.width = this.util.isNumber(w) ? w + '%' : w;
-        contextImage._container.style.height = '';
-        contextImage._cover.style.width = '100%';
-        contextImage._cover.style.height = !heightPercentage ? '' : h;
+        if(contextImage._container) {
+            contextImage._container.style.width = this.util.isNumber(w) ? w + '%' : w;
+            contextImage._container.style.height = '';
+        }
+        
+        if(contextImage._cover) {
+            contextImage._cover.style.width = '100%';
+            contextImage._cover.style.height = !heightPercentage ? '' : h;
+        }
+        
         contextImage._element.style.width = '100%';
         contextImage._element.style.height = heightPercentage ? '' : h;
         contextImage._element.style.maxWidth = '';
@@ -1056,10 +1083,14 @@ export default {
     cancelPercentAttr: function () {
         const contextImage = this.context.image;
         
-        contextImage._cover.style.width = '';
-        contextImage._cover.style.height = '';
-        contextImage._container.style.width = '';
-        contextImage._container.style.height = '';
+        if(contextImage._cover) {
+            contextImage._cover.style.width = '';
+            contextImage._cover.style.height = '';
+        }
+        if(contextImage._container) {
+            contextImage._container.style.width = '';
+            contextImage._container.style.height = '';
+        }
 
         this.util.removeClass(contextImage._container, this.context.image._floatClassRegExp);
         this.util.addClass(contextImage._container, '__se__float-' + contextImage._align);
@@ -1079,11 +1110,11 @@ export default {
         if (!container) container = contextImage._container;
 
         if (/%$/.test(element.style.width) && align === 'center') {
-            container.style.minWidth = '100%';
-            cover.style.width = container.style.width;
+            if(container) container.style.minWidth = '100%';
+            if(cover) cover.style.width = container.style.width;
         } else {
-            container.style.minWidth = '';
-            cover.style.width = this.context.resizing._rotateVertical ? (element.style.height || element.offsetHeight) : ((!element.style.width || element.style.width === 'auto') ? '' : element.style.width || '100%');
+            if(container) container.style.minWidth = '';
+            if(cover) cover.style.width = this.context.resizing._rotateVertical ? (element.style.height || element.offsetHeight) : ((!element.style.width || element.style.width === 'auto') ? '' : element.style.width || '100%');
         }
 
         if (!this.util.hasClass(container, '__se__float-' + align)) {
@@ -1107,6 +1138,7 @@ export default {
         }
 
         contextImage.altText.value = '';
+        contextImage.optimize.checked = true;
         contextImage.modal.querySelector('input[name="suneditor_image_radio"][value="none"]').checked = true;
         contextImage.captionCheckEl.checked = false;
         contextImage._element = null;
